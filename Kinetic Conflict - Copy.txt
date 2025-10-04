@@ -1,0 +1,119 @@
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.integrate import odeint
+#7
+# --- EEM PARAMETERS (As defined in Table 1) ---
+RHO_RES = 1.0   # Equilibrium Density (Lambda floor)
+GAMMA = 0.75    # Relaxation Rate (Mandatory for structural integrity)
+D = 0.1         # Diffusion Coefficient (Emergent Gravity)
+
+# --- SIMULATION PARAMETERS ---
+L = 100         # Spatial domain size (1D)
+N = 201         # Number of spatial points
+dx = L / (N - 1)
+x = np.linspace(0, L, N)
+T_MAX = 5.0     # Total simulation time (short time to show initial collapse)
+dt = 0.001      # Time step for the explicit solver (Chosen for stability)
+steps = int(T_MAX / dt)
+
+# --- INITIAL CONDITION: Localized Wave Packet / Lump (Test Structure) ---
+def initial_condition():
+    """Initial density is a Gaussian lump on top of the residual floor."""
+    mu = L / 2
+    sigma = 5.0
+    # A density lump significantly above rho_res
+    initial_lump = 1.0 * np.exp(-0.5 * ((x - mu) / sigma)**2)
+    return RHO_RES + initial_lump
+
+# --- CORE EEM PDE FUNCTION (For the Explicit Time Stepper) ---
+def eem_pde_step(rho, dt):
+    """
+    Implements a single step of the validated core EEM PDE (Eq. 1).
+    Uses Periodic Boundary Conditions (PBC).
+    """
+    rho_new = np.copy(rho)
+
+    # 1. Calculate the Diffusion/Emergent Gravity term (D * Laplacian)
+    # Using a 3-point stencil for the 1D Laplacian: (rho[i-1] - 2*rho[i] + rho[i+1]) / dx^2
+    laplacian = (np.roll(rho, 1) - 2 * rho + np.roll(rho, -1)) / (dx**2)
+    flow_term = D * laplacian
+
+    # 2. Calculate the Non-Linear Relaxation/Lambda term
+    relaxation_term = GAMMA * rho * (RHO_RES - rho)
+
+    # 3. Time evolution: d(rho)/dt * dt
+    drho_dt = flow_term + relaxation_term
+
+    # Update density
+    rho_new = rho + drho_dt * dt
+
+    # Ensure density does not go below zero (for stability/physicality)
+    return np.maximum(rho_new, 0.0)
+
+# --- SIMULATION RUN ---
+rho_t0 = initial_condition()
+rho_history = [rho_t0]
+
+print(f"Starting Protocol 7 (Kinetic Conflict Test)...")
+print(f"Initial Max Density (t=0): {np.max(rho_t0):.4f}")
+
+# Store the maximum density over time to track dissipation
+max_density_over_time = [np.max(rho_t0)]
+time_points = [0.0]
+
+for i in range(steps):
+    rho_next = eem_pde_step(rho_history[-1], dt)
+    rho_history.append(rho_next)
+    max_density_over_time.append(np.max(rho_next))
+    time_points.append((i + 1) * dt)
+
+    if (i + 1) % (steps // 5) == 0: # Store a few spatial profiles for the plot
+        print(f"Time {(i + 1) * dt:.2f}/{T_MAX:.2f} completed.")
+
+rho_final = rho_history[-1]
+print(f"Final Max Density (t={T_MAX:.2f}): {np.max(rho_final):.4f}")
+print(f"Total variance collapse check: {np.var(rho_final):.10f}")
+
+# --- PLOTTING RESULTS (The Conflict Proof) ---
+plt.figure(figsize=(15, 6))
+
+# Panel A: Spatial Profile (Proof of Damping)
+plt.subplot(1, 2, 1)
+plt.plot(x, rho_t0, label=f'Initial Profile (t=0)', color='blue')
+# Plot a few intermediate steps
+indices_to_plot = [int(0.1 * steps), int(0.5 * steps), steps]
+times_to_plot = [time_points[idx] for idx in indices_to_plot]
+profiles_to_plot = [rho_history[idx] for idx in indices_to_plot]
+
+for i, (profile, t) in enumerate(zip(profiles_to_plot, times_to_plot)):
+    plt.plot(x, profile, linestyle='--',
+             label=f'Profile at t={t:.2f}',
+             alpha=1.0 - i * 0.2,
+             color='red')
+
+plt.axhline(RHO_RES, color='k', linestyle=':', label='Rho_res ($\\Lambda$ Floor)')
+plt.title('Protocol 7: Spatial Profile Damping (Non-Unitary Evolution)')
+plt.xlabel('Spatial Dimension (x)')
+plt.ylabel('Energy Density ($\\rho$)')
+plt.legend()
+plt.grid(True, alpha=0.5)
+
+# Panel B: Temporal Decay (Proof of Non-Conservative Flow)
+# The "mass" or total energy of the localized lump (relative to the floor)
+total_lump_mass = [(np.sum(r - RHO_RES) * dx) for r in rho_history]
+max_density_relative = [m - RHO_RES for m in max_density_over_time]
+
+plt.subplot(1, 2, 2)
+# Since the conflict is with *conservation*, plotting total mass loss is key.
+plt.plot(time_points, max_density_relative, label='Peak Excess Density (Max $\\rho$ - $\\rho_{\\text{res}}$)', color='red')
+plt.plot(time_points, total_lump_mass, label='Total Excess Energy (Lump Mass)', color='orange', linestyle='-')
+
+plt.title('Temporal Dissipation (The Non-Unitary Conflict)')
+plt.xlabel('EEM Time (t)')
+plt.ylabel('Lump Energy / Excess Density')
+plt.yscale('log') # Use log scale to clearly show the rapid decay
+plt.legend()
+plt.grid(True, which="both", alpha=0.5)
+
+plt.tight_layout()
+plt.show()

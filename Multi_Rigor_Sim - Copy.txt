@@ -1,0 +1,120 @@
+
+import numpy as np
+import matplotlib.pyplot as plt
+import pandas as pd
+
+# ====================================================================
+# EEM MULTI-RIGOR STABILITY TEST
+# ====================================================================
+
+# 1. CORE EEM CONSTANTS
+GAMMA = 0.75     # Relaxation Rate
+D = 0.1          # Diffusion/Mobility Coefficient
+RHO_RES = 1.0    # Residual Energy Density (The Lambda Floor)
+DX = 1.0         # Spatial step size
+DT = 0.01        # Time step size
+N_SPACE = 101    # Spatial grid points
+N_TIME = 50000   # Total steps (t=500.0 EEM Time)
+LOG_INTERVAL = 100 # Log every 100 steps
+
+# 2. SIMULATION SCENARIOS
+SCENARIOS = {
+    'A_Baseline_Periodic': {'initial_mean': 1.98, 'noise': 0.01, 'BC': 'periodic'},
+    'B_Fixed_Boundaries': {'initial_mean': 1.98, 'noise': 0.01, 'BC': 'fixed'},
+    'C_High_Initial_Noise': {'initial_mean': 1.98, 'noise': 0.20, 'BC': 'periodic'} # 20x higher variance
+}
+
+# 3. EEM DYNAMIC FUNCTION (Full PDE)
+def calculate_drho_dt(rho, D, GAMMA, RHO_RES, DX, BC):
+    
+    # 1. DIFFUSION TERM
+    rho_xx = (np.roll(rho, -1) - 2 * rho + np.roll(rho, 1)) / (DX**2)
+    diffusion_term = D * rho_xx
+
+    # Apply Boundary Conditions to Diffusion Term
+    if BC == 'fixed':
+        # Fixed Boundaries: set d^2(rho)/dx^2 = 0 at the boundaries (simplest numerical method)
+        rho_xx[0] = 0.0
+        rho_xx[-1] = 0.0
+    
+    # 2. LOGISTIC/RELAXATION TERM (The Lambda Solver)
+    relaxation_term = GAMMA * rho * (RHO_RES - rho) 
+    return diffusion_term + relaxation_term
+
+# 4. SIMULATION AND LOGGING SETUP
+all_log_data = {}
+print(f"Running Protocol 10: Multi-Rigor Stability Test (t={N_TIME * DT:.1f})...")
+
+for name, params in SCENARIOS.items():
+    print(f"--- Scenario: {name} (BC: {params['BC']}, Noise: {params['noise']})")
+    
+    # Initialize Density Field
+    rho = params['initial_mean'] + params['noise'] * (np.random.rand(N_SPACE) - 0.5)
+    log_data = []
+
+    for step in range(N_TIME + 1):
+        drho_dt = calculate_drho_dt(rho, D, GAMMA, RHO_RES, DX, params['BC'])
+        rho += drho_dt * DT
+        
+        # Log data for plotting
+        if step % LOG_INTERVAL == 0:
+            mean_rho = np.mean(rho)
+            current_variance = np.var(rho)
+            uv_cap_ratio = np.sqrt(RHO_RES / mean_rho) 
+            
+            log_data.append({
+                'EEM Time (t)': step * DT,
+                'Mean Rho': mean_rho,
+                'Vacuum Variance': current_variance,
+                'UV Cap Ratio': uv_cap_ratio
+            })
+
+    all_log_data[name] = pd.DataFrame(log_data)
+    
+# ====================================================================
+# 5. CHART GENERATION 
+# ====================================================================
+
+plt.figure(figsize=(15, 5))
+titles = ['A. Lambda Solution (Mean Density)', 'B. Emergent Gravity (Log Variance)', 'C. Higgs Protection (UV Cap Ratio)']
+
+for i, metric in enumerate(['Mean Rho', 'Vacuum Variance', 'UV Cap Ratio']):
+    plt.subplot(1, 3, i + 1)
+    
+    for name, df in all_log_data.items():
+        time = df['EEM Time (t)']
+        
+        # Log-scale for Variance is critical
+        if metric == 'Vacuum Variance':
+            plt.semilogy(time, df[metric], label=name, alpha=0.8, linewidth=1.5)
+            plt.axhline(1e-8, color='gray', linestyle=':', label='Numerical Zero', alpha=0.5)
+            plt.ylabel(r'Variance ($\sigma^2$) [Log Scale]')
+        else:
+            plt.plot(time, df[metric], label=name, alpha=0.8, linewidth=1.5)
+            plt.axhline(RHO_RES if metric == 'Mean Rho' else 1.0, color='gray', linestyle='--', alpha=0.5)
+            if metric == 'Mean Rho':
+                plt.ylabel(r'Mean Density $\bar{\rho}$')
+                plt.ylim(0.95, 2.05)
+            else:
+                plt.ylabel(r'UV Cap Ratio')
+                plt.ylim(0.7, 1.01)
+
+    plt.title(titles[i], fontsize=10)
+    plt.xlabel('EEM Time (t)')
+    plt.legend(fontsize=7)
+    plt.grid(True, linestyle=':', alpha=0.6)
+
+plt.tight_layout(pad=3.0)
+plt.show()
+
+# Display a table showing the final values for direct comparison
+print("\n--- FINAL RIGOR TEST COMPARISON LOG (t=500.0) ---")
+final_results = {}
+for name, df in all_log_data.items():
+    final_results[name] = df.iloc[-1][['Mean Rho', 'Vacuum Variance', 'UV Cap Ratio']].to_dict()
+
+final_df = pd.DataFrame.from_dict(final_results, orient='index')
+final_df = final_df.rename(columns={'Mean Rho': 'Final Mean Rho', 'Vacuum Variance': 'Final Sigma^2', 'UV Cap Ratio': 'Final UV Cap Ratio'})
+print(final_df.to_string(float_format='%.8f'))
+
+print("\nRESULT: If all final Mean Rho values are near 1.000 and Sigma^2 values are near 0.000, the model exhibits strong structural independence.")

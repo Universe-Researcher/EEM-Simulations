@@ -1,0 +1,135 @@
+import numpy as np
+import matplotlib.pyplot as plt
+import time
+#13
+# --- EEM PARAMETERS (As defined in Table 1) ---
+RHO_RES = 1.0   # Equilibrium Density (Lambda floor)
+GAMMA = 0.75    # Relaxation Rate (MANDATORY for Lambda solution)
+D = 0.1         # Diffusion Coefficient (Emergent Gravity)
+
+# --- SIMULATION PARAMETERS ---
+L = 100         # Spatial domain size (1D)
+N = 201         # Number of spatial points
+dx = L / (N - 1)
+x = np.linspace(0, L, N)
+T_MAX = 50.0    # Time needed to reach the stable fixed point
+dt = 0.001      # Time step (smaller dt for stability with source term)
+steps = int(T_MAX / dt)
+
+# --- DARK MATTER SOURCE TERM (S) SETUP ---
+S_STRENGTH = 0.0394 # Source strength used in your paper's log (Table 4)
+S_WIDTH = 5.0       # Spatial extent of the source
+center_x = L / 2
+
+# The source S is a constant energy injection, localized by a Gaussian
+S_source = S_STRENGTH * np.exp(-0.5 * ((x - center_x) / S_WIDTH)**2)
+
+print(f"S_STRENGTH (Local Injection): {S_STRENGTH}")
+print(f"Average S over domain: {np.mean(S_source):.6f}")
+
+# --- INITIAL CONDITION: Flat Vacuum Start ---
+# Start the system flat at the equilibrium floor
+rho_t0 = np.full(N, RHO_RES)
+
+# --- MODIFIED EEM PDE FUNCTION (with Source Term) ---
+def eem_pde_step_dm(rho, dt, S):
+    """
+    Implements a single step of the EEM PDE with the localized Source term S.
+    Uses Periodic Boundary Conditions (PBC).
+    """
+    rho_new = np.copy(rho)
+
+    # 1. Diffusion/Emergent Gravity term (D * Laplacian)
+    laplacian = (np.roll(rho, 1) - 2 * rho + np.roll(rho, -1)) / (dx**2)
+    flow_term = D * laplacian
+
+    # 2. Non-Linear Relaxation/Lambda term (The structural mandate)
+    relaxation_term = GAMMA * rho * (RHO_RES - rho)
+
+    # 3. Localized Constant Source term (S)
+    source_term = S # S is the pre-calculated array S_source
+
+    # 4. Time evolution: d(rho)/dt * dt
+    drho_dt = flow_term + relaxation_term + source_term
+
+    # Update density
+    rho_new = rho + drho_dt * dt
+
+    return np.maximum(rho_new, 0.0)
+
+# --- SIMULATION RUN ---
+rho_history_dm_coexist = [rho_t0]
+center_density_history = [rho_t0[N//2]]
+mean_density_history = [np.mean(rho_t0)]
+time_points = [0.0]
+
+print(f"\nStarting (Dark Matter Structural Coexistence Test)...")
+
+# Index near the center for tracking local stability
+center_index = N // 2
+
+start_time = time.time()
+
+for i in range(steps):
+    rho_next = eem_pde_step_dm(rho_history_dm_coexist[-1], dt, S_source)
+    rho_history_dm_coexist.append(rho_next)
+
+    # Store key metrics for the plot
+    mean_density_history.append(np.mean(rho_next))
+    center_density_history.append(rho_next[center_index])
+    time_points.append((i + 1) * dt)
+
+    # Check for stability and print progress
+    if (i + 1) % (steps // 5) == 0:
+        elapsed = time.time() - start_time
+        print(f"Time {(i + 1) * dt:.2f}/{T_MAX:.2f} completed. Mean rho: {mean_density_history[-1]:.6f}")
+
+rho_final_dm = rho_history_dm_coexist[-1]
+final_mean_rho = np.mean(rho_final_dm)
+final_center_rho = rho_final_dm[center_index]
+
+print(f"\n--- Final State Validation (t={T_MAX:.2f}) ---")
+print(f"Final Global Mean Rho (Should be ~1.0): {final_mean_rho:.8f}")
+print(f"Final Center Density (Stable Defect): {final_center_rho:.8f}")
+print(f"Stability Check (Center - Mean): {final_center_rho - final_mean_rho:.8f}")
+
+
+# --- PLOTTING RESULTS (The Coexistence Proof) ---
+plt.figure(figsize=(18, 6))
+
+# Panel A: Final Spatial Profile (Confirms localized defect on flat floor)
+plt.subplot(1, 3, 1)
+plt.plot(x, rho_final_dm, label=f'Final Profile (t={T_MAX:.1f})', color='darkred', linewidth=2)
+plt.axhline(RHO_RES, color='k', linestyle=':', label=r'Rho_res ($\Lambda$ Floor)')
+plt.axhline(final_mean_rho, color='blue', linestyle='--', label=f'Final Mean Rho ({final_mean_rho:.4f})')
+plt.title('Panel A: Final Spatial Profile (Structural Coexistence)')
+plt.xlabel('Spatial Dimension (x)')
+plt.ylabel(r'Energy Density ($\rho$)')
+plt.legend(loc='upper right')
+plt.grid(True, alpha=0.5)
+
+# Panel B: Global Lambda Stability (Confirms Mean Rho stability)
+plt.subplot(1, 3, 2)
+plt.plot(time_points, mean_density_history, label=r'Global Mean Density ($\mathbf{\bar{\rho}}$)', color='blue')
+plt.axhline(RHO_RES, color='k', linestyle=':', label=r'Target $\mathbf{\rho_{\text{res}}}$')
+plt.title(r'Panel B: Global $\mathbf{\Lambda}$ Stability (Mean Density)')
+plt.xlabel('EEM Time (t)')
+plt.ylabel(r'Global Mean Density ($\mathbf{\bar{\rho}}$)')
+plt.ylim(0.9995, 1.0025) # Zoom in to show stability near 1.0
+plt.legend()
+plt.grid(True, which="both", alpha=0.5)
+
+
+# Panel C: Local Defect Stability (Confirms Center Rho stability)
+plt.subplot(1, 3, 3)
+plt.plot(time_points, center_density_history, label=r'Local Center Density ($\mathbf{\rho_{\text{DM}}}$)', color='red')
+plt.axhline(final_center_rho, color='k', linestyle=':', label=f'Stable Value ({final_center_rho:.4f})')
+plt.title('Panel C: Local Defect Stability (Dark Matter Proxy)')
+plt.xlabel('EEM Time (t)')
+plt.ylabel(r'Local Center Density ($\mathbf{\rho_{\text{center}}}$)')
+plt.legend()
+plt.grid(True, which="both", alpha=0.5)
+
+plt.tight_layout(rect=[0, 0, 1, 0.95])
+plt.suptitle(f"Dark Matter Structural Coexistence Test (S={S_STRENGTH}, $\\Gamma={GAMMA}$)", fontsize=16)
+plt.show()

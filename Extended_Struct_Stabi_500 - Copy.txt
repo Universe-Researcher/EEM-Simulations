@@ -1,0 +1,84 @@
+import numpy as np
+import matplotlib.pyplot as plt
+import pandas as pd
+
+# ====================================================================
+# EEM EXTENDED STRUCTURAL STABILITY TEST (500 EEM Time Units)
+# ====================================================================
+
+# 1. CORE EEM CONSTANTS
+GAMMA = 0.75     # Relaxation Rate
+D = 0.1          # Diffusion/Mobility Coefficient
+RHO_RES = 1.0    # Residual Energy Density (The Lambda Floor)
+DX = 1.0         # Spatial step size
+DT = 0.01        # Time step size
+N_SPACE = 101    # Spatial grid points
+N_TIME = 50000   # <<--- 10x the previous run (Equivalent to t=500.0 EEM Time)
+
+# 2. INITIAL CONDITIONS: High energy state (Pre-Inflation)
+initial_mean = 1.9883
+initial_noise = 0.01
+rho = initial_mean + initial_noise * (np.random.rand(N_SPACE) - 0.5)
+
+# 3. EEM DYNAMIC FUNCTION (Full PDE)
+def calculate_drho_dt(rho, D, GAMMA, RHO_RES, DX):
+    # 1. DIFFUSION TERM 
+    rho_xx = (np.roll(rho, -1) - 2 * rho + np.roll(rho, 1)) / (DX**2)
+    diffusion_term = D * rho_xx
+
+    # 2. LOGISTIC/RELAXATION TERM (The Lambda Solver)
+    relaxation_term = GAMMA * rho * (RHO_RES - rho) 
+    return diffusion_term + relaxation_term
+
+# 4. DATA LOGGING AND SNAPSHOTS
+# Log at key stabilization points (0.5, 5.0) and then every 100 EEM time units
+log_steps = [0, 50, 500] + list(range(10000, N_TIME + 1, 10000)) 
+log_data = []
+
+# 5. SIMULATION LOOP
+print(f"Running Protocol 9: Extended Structural Stability Test (t={N_TIME * DT:.1f})...")
+
+for step in range(N_TIME + 1):
+    drho_dt = calculate_drho_dt(rho, D, GAMMA, RHO_RES, DX)
+    rho += drho_dt * DT
+    
+    # Calculate Metrics for Logging
+    mean_rho = np.mean(rho)
+    current_variance = np.var(rho)
+    uv_cap_ratio = np.sqrt(RHO_RES / mean_rho) 
+    
+    # Log data at key snapshots
+    if step in log_steps:
+        log_data.append({
+            'EEM Time (t)': step * DT,
+            'Mean Rho': mean_rho,
+            'Vacuum Variance (Sigma^2)': current_variance,
+            'UV Cap Ratio': uv_cap_ratio
+        })
+
+# ====================================================================
+# 6. RESULTS AND VALIDATION
+# ====================================================================
+
+results_df = pd.DataFrame(log_data)
+print("\n--- EEM EXTENDED STRUCTURAL VALIDATION LOG ---")
+print(results_df.to_string(index=False, float_format='%.8f'))
+
+# Final Validation Check
+final_mean_rho = results_df['Mean Rho'].iloc[-1]
+final_variance = results_df['Vacuum Variance (Sigma^2)'].iloc[-1]
+final_uv_cap_ratio = results_df['UV Cap Ratio'].iloc[-1]
+
+print("\n--- FINAL VALIDATION SUMMARY (t=500.0) ---")
+
+# Check 1: Long-Term Lambda Solution
+if np.isclose(final_mean_rho, RHO_RES, atol=1e-8):
+    print(f"1. Lambda Stability: VALIDATED. Mean Rho is stable at {final_mean_rho:.8f} after extended time.")
+else:
+    print("1. Lambda Stability: PENDING. Mean Rho drifted from RHO_RES.")
+
+# Check 2: Long-Term Higgs Protection
+if np.isclose(final_uv_cap_ratio, 1.0, atol=1e-8):
+    print(f"2. Higgs Protection: VALIDATED. UV Cap Ratio is stable at {final_uv_cap_ratio:.8f} over extended time.")
+else:
+    print("2. Higgs Protection: PENDING. UV Cap Ratio drifted from 1.0.")

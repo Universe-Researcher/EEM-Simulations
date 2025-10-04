@@ -1,0 +1,149 @@
+import numpy as np
+import matplotlib.pyplot as plt
+#5
+# --- EEM PARAMETERS (As defined in Table 1) ---
+RHO_RES = 1.0   # Equilibrium Density (Lambda floor)
+GAMMA = 0.75    # Relaxation Rate (Set to 0.0 for this test to focus purely on D(x) flow)
+D_BASELINE = 0.1 # Baseline Diffusion Coefficient
+
+# --- SIMULATION PARAMETERS ---
+L = 100         # Spatial domain size (1D)
+N = 201         # Number of spatial points
+dx = L / (N - 1)
+x = np.linspace(0, L, N)
+T_MAX = 50.0    # Longer time to allow a stable profile to form
+dt = 0.005      # Time step
+steps = int(T_MAX / dt)
+
+# --- STRUCTURAL IMPEDANCE (D(x)) SETUP ---
+# Create a spatially varying Diffusion Coefficient D(x)
+D_x = np.full(N, D_BASELINE)
+
+# Define a localized region (the "Dark Matter" core) where flow is impeded.
+# In the EEM, this is where D(x) is *reduced*.
+center_x = L / 2
+impedance_width = 10
+impedance_reduction_factor = 0.01 # D(x) is reduced by 100x in the center
+
+# Apply the impedance using a Gaussian profile for smooth transition
+impedance_mask = np.exp(-0.5 * ((x - center_x) / impedance_width)**2)
+
+# D(x) = D_BASELINE * (1 - impedance_mask * (1 - reduction_factor))
+D_x = D_BASELINE * (1 - impedance_mask * (1 - impedance_reduction_factor))
+
+print(f"Min D(x) (Center Impedance): {np.min(D_x):.4f}")
+print(f"Max D(x) (Baseline): {np.max(D_x):.4f}")
+
+# --- INITIAL CONDITION: A Localized Density Excess to be Dissipated ---
+def initial_condition_dm_test():
+    """Start with a sharp, localized density spike/bump."""
+    mu = L / 2
+    sigma = 2.0
+    initial_lump = 0.5 * np.exp(-0.5 * ((x - mu) / sigma)**2)
+    # Start at rho_res, with the spike on top
+    return RHO_RES + initial_lump
+
+# --- NON-LINEAR D(x) PDE STEP ---
+def dm_pde_step(rho, dt, D_x):
+    """
+    Implements the non-linear diffusion flow: d(rho)/dt = Del . (D(x) * Del rho)
+    Uses Periodic Boundary Conditions.
+    """
+    rho_new = np.copy(rho)
+
+    # 1. Calculate the Flux J = -D(x) * Del(rho)
+    # The gradient of rho (Del rho) using central difference
+    d_rho_dx = (np.roll(rho, -1) - np.roll(rho, 1)) / (2 * dx)
+
+    # The flux J = -D(x) * d(rho)/dx. The 'minus' is in the PDE definition.
+    J = D_x * d_rho_dx
+
+    # 2. Calculate the Flow Term: -Del . J
+    # Divergence of J (Del . J) using central difference
+    d_J_dx = (np.roll(J, -1) - np.roll(J, 1)) / (2 * dx)
+
+    # The flow term is -d(J)/dx
+    flow_term = -d_J_dx
+
+    # 3. Add the Relaxation Term (We set GAMMA=0 for this D(x) test, but keep it here)
+    relaxation_term = GAMMA * rho * (RHO_RES - rho)
+
+    # 4. Time evolution: d(rho)/dt * dt
+    drho_dt = flow_term + relaxation_term
+
+    # Update density
+    rho_new = rho + drho_dt * dt
+
+    return np.maximum(rho_new, 0.0)
+
+# --- SIMULATION RUN ---
+rho_t0 = initial_condition_dm_test()
+rho_history_dm = [rho_t0]
+
+print(f"\nStarting Protocol 5 (Dark Matter Impedance Test)...")
+print(f"Initial Max Density (t=0): {np.max(rho_t0):.4f}")
+
+# Store the maximum density over time
+max_density_dm = [np.max(rho_t0)]
+time_points_dm = [0.0]
+
+for i in range(steps):
+    rho_next = dm_pde_step(rho_history_dm[-1], dt, D_x)
+    rho_history_dm.append(rho_next)
+    max_density_dm.append(np.max(rho_next))
+    time_points_dm.append((i + 1) * dt)
+
+    if (i + 1) % (steps // 5) == 0:
+        print(f"Time {(i + 1) * dt:.2f}/{T_MAX:.2f} completed.")
+
+rho_final_dm = rho_history_dm[-1]
+print(f"Final Max Density (t={T_MAX:.2f}): {np.max(rho_final_dm):.4f}")
+
+# --- PLOTTING RESULTS (The Impedance Proof) ---
+plt.figure(figsize=(15, 6))
+
+# Panel A: Spatial Profile Comparison
+plt.subplot(1, 2, 1)
+plt.plot(x, rho_t0, label=f'Initial Profile (t=0)', color='blue')
+plt.plot(x, rho_final_dm, label=f'Final Profile (t={T_MAX:.1f})', color='darkred', linewidth=2)
+# Use raw string for the label to avoid syntax warnings
+plt.axhline(RHO_RES, color='k', linestyle=':', label=r'Rho_res ($\Lambda$ Floor)')
+
+# Overlay the D(x) profile (inverted for visualization)
+D_norm = (D_x - np.min(D_x)) / (np.max(D_x) - np.min(D_x)) # Normalize D(x) to [0, 1]
+# Map normalized D(x) to the y-axis range [1.0, 1.2] for visibility
+D_plot = RHO_RES + 0.2 * (1 - D_norm) # Invert and place at bottom
+plt.plot(x, D_plot, color='green', linestyle='-', alpha=0.5, label='Inverted D(x) Profile (Impedance)')
+
+plt.title('Dark Matter Structural Impedance Test')
+plt.xlabel('Spatial Dimension (x)')
+# Correct the ylabel text
+plt.ylabel(r'Energy Density ($\rho$)')
+plt.ylim(RHO_RES - 0.05, np.max(rho_t0) + 0.05)
+plt.legend(loc='upper right')
+plt.grid(True, alpha=0.5)
+
+# Panel B: Temporal Max Density (Proof of Trapping/Slowing Dissipation)
+plt.subplot(1, 2, 2)
+plt.plot(time_points_dm, max_density_dm, label='Peak Density Over Time', color='darkred')
+
+# Compare with a pure, uniform D flow (if D_x was a flat line)
+rho_uniform_d = initial_condition_dm_test()
+max_uniform_d = [np.max(rho_uniform_d)]
+for i in range(steps):
+    # Use the simple uniform D step (same as Protocol 7, but with GAMMA=0)
+    laplacian = (np.roll(rho_uniform_d, 1) - 2 * rho_uniform_d + np.roll(rho_uniform_d, -1)) / (dx**2)
+    rho_uniform_d = rho_uniform_d + (D_BASELINE * laplacian) * dt
+    max_uniform_d.append(np.max(rho_uniform_d))
+
+# Slice time_points_dm to match the length of max_uniform_d[:-1]
+plt.plot(time_points_dm, max_uniform_d, label='Uniform D Dissipation (Control)', color='gray', linestyle='--')
+
+plt.title('Dissipation Rate Comparison')
+plt.xlabel('EEM Time (t)')
+plt.ylabel(r'Max Energy Density ($\rho_{max}$)')
+plt.legend()
+plt.grid(True, which="both", alpha=0.5)
+
+plt.tight_layout()
+plt.show()

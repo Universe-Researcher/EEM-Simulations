@@ -1,0 +1,127 @@
+import numpy as np
+import matplotlib.pyplot as plt
+import pandas as pd
+
+# ====================================================================
+# EEM DARK MATTER EFFECT PARAMETER SWEEP AND STABILITY TEST
+# ====================================================================
+
+# 1. CORE EEM CONSTANTS (Validated Parameters)
+GAMMA = 0.75     # Gamma must be ON for global Lambda stability
+D = 0.1          # Diffusion/Mobility Coefficient
+RHO_RES = 1.0    # Residual Energy Density (The Lambda Floor)
+DX = 1.0         # Spatial step size
+DT = 0.01        # Time step size
+N_SPACE = 101    # Spatial grid points
+N_TIME = 100000  # Total steps (t=1000.0 EEM Time for extreme permanence test)
+LOG_INTERVAL = 1000 # Log every 1000 steps
+
+# 2. LOCALIZED SOURCE/FORCE SETUP - PARAMETER SWEEP
+# We'll test a range of source strengths to see how the stable defect changes
+SOURCE_STRENGTHS = [0.01, 0.03, 0.039375, 0.05, 0.07] # 0.039375 targets ~1.05 defect
+SOURCE_CENTER = N_SPACE // 2
+SOURCE_WIDTH = 5
+
+S_base = np.zeros(N_SPACE)
+S_base[SOURCE_CENTER - SOURCE_WIDTH // 2 : SOURCE_CENTER + SOURCE_WIDTH // 2] = 1.0 # Will be scaled
+
+# 3. EEM DYNAMIC FUNCTION (Full PDE with S term)
+def calculate_drho_dt(rho, D, GAMMA, RHO_RES, DX, current_S_scaled):
+    rho_xx = (np.roll(rho, -1) - 2 * rho + np.roll(rho, 1)) / (DX**2)
+    diffusion_term = D * rho_xx
+    relaxation_term = GAMMA * rho * (RHO_RES - rho) 
+    source_term = current_S_scaled # Use the scaled S for this run
+    return diffusion_term + relaxation_term + source_term
+
+# 4. SIMULATION AND LOGGING SETUP
+all_log_data = {}
+final_rho_profiles = {}
+
+print(f"Running Protocol 13: Dark Matter Effect Sweep (t={N_TIME * DT:.1f})...")
+
+for ss in SOURCE_STRENGTHS:
+    scenario_name = f'Source={ss:.4f}'
+    print(f"--- Scenario: {scenario_name}")
+    
+    current_S_scaled = S_base * ss # Scale the base source array
+    
+    rho = RHO_RES * np.ones(N_SPACE) + 0.001 * (np.random.rand(N_SPACE) - 0.5) # Start near equilibrium
+    log_data = []
+
+    for step in range(N_TIME + 1):
+        drho_dt = calculate_drho_dt(rho, D, GAMMA, RHO_RES, DX, current_S_scaled)
+        rho += drho_dt * DT
+        
+        if step % LOG_INTERVAL == 0:
+            mean_rho = np.mean(rho)
+            center_rho = rho[SOURCE_CENTER]
+            
+            log_data.append({
+                'EEM Time (t)': step * DT,
+                'Mean Rho': mean_rho,
+                'Center Density': center_rho
+            })
+
+    all_log_data[scenario_name] = pd.DataFrame(log_data)
+    final_rho_profiles[scenario_name] = rho.copy() # Store final spatial profile
+
+
+# ====================================================================
+# 5. CHART GENERATION AND ANALYSIS
+# ====================================================================
+
+plt.figure(figsize=(18, 6))
+
+# Panel A: Mean Density (Global Lambda Stability Check for all sources)
+plt.subplot(1, 3, 1)
+for name, df in all_log_data.items():
+    plt.plot(df['EEM Time (t)'], df['Mean Rho'], label=name, alpha=0.8, linewidth=1.5)
+plt.axhline(RHO_RES, color='gray', linestyle='--', label=r'$\rho_{\text{res}}$ Target')
+plt.title(r'A. Global $\Lambda$ Stability (Mean $\rho$ vs Time)')
+plt.xlabel('EEM Time (t)')
+plt.ylabel(r'Mean Density $\bar{\rho}$')
+plt.ylim(0.999, 1.05) # Adjust based on expected global perturbation
+plt.grid(True, linestyle=':', alpha=0.6)
+plt.legend(fontsize=7)
+
+# Panel B: Center Density (Stable Dark Matter Defect for all sources)
+plt.subplot(1, 3, 2)
+for name, df in all_log_data.items():
+    plt.plot(df['EEM Time (t)'], df['Center Density'], label=name, alpha=0.8, linewidth=1.5)
+plt.axhline(RHO_RES, color='gray', linestyle='--', label=r'$\rho_{\text{res}}$ Floor')
+plt.title(r'B. Local Defect Stability (Center Density vs Time)')
+plt.xlabel('EEM Time (t)')
+plt.ylabel(r'Density at Source Center $\rho_{center}$')
+plt.grid(True, linestyle=':', alpha=0.6)
+plt.legend(fontsize=7)
+
+# Panel C: Final Spatial Profile of a Representative Stable Defect
+plt.subplot(1, 3, 3)
+# Choose a representative defect to show, e.g., the one closest to SOURCE_STRENGTH=0.039375
+representative_source_name = f'Source={0.0394:.4f}' # Adjust if exact match not found
+if representative_source_name not in final_rho_profiles:
+    representative_source_name = f'Source={SOURCE_STRENGTHS[2]:.4f}' # Fallback
+plt.plot(np.arange(N_SPACE) * DX, final_rho_profiles[representative_source_name], color='darkgreen', linewidth=2.0)
+plt.axhline(RHO_RES, color='gray', linestyle='--', label=r'$\rho_{\text{res}}$ Floor')
+plt.title(f'C. Final Spatial Profile (Defect from {representative_source_name})')
+plt.xlabel('Spatial Position (x)')
+plt.ylabel(r'Density $\rho(x)$')
+plt.ylim(0.99, 1.08) # Focus on the defect
+plt.grid(True, linestyle=':', alpha=0.6)
+plt.legend(fontsize=7)
+
+
+plt.tight_layout(pad=3.0)
+plt.show()
+
+# Display a table showing the final values for direct comparison
+print("\n--- DARK MATTER PARAMETER SWEEP LOG (t=1000.0) ---")
+final_results_dm = {}
+for name, df in all_log_data.items():
+    final_results_dm[name] = df.iloc[-1][['Mean Rho', 'Center Density']].to_dict()
+
+final_df_dm = pd.DataFrame.from_dict(final_results_dm, orient='index')
+final_df_dm = final_df_dm.rename(columns={'Mean Rho': 'Final Mean Rho', 'Center Density': 'Final Center Density'})
+print(final_df_dm.to_string(float_format='%.6f'))
+
+print("\nRESULT: Final Mean Rho values near 1.0 indicate global Lambda stability. Final Center Density > 1.0 indicates stable Dark Matter-like defects.")

@@ -1,0 +1,108 @@
+import numpy as np
+import matplotlib.pyplot as plt
+import pandas as pd
+
+# ====================================================================
+# EEM EXTENDED STRUCTURAL STABILITY TEST
+# ====================================================================
+
+# 1. CORE EEM CONSTANTS
+GAMMA = 0.75     # Relaxation Rate (Required for Lambda Solution)
+D = 0.1          # Diffusion/Mobility Coefficient
+RHO_RES = 1.0    # Residual Energy Density (The Lambda Floor)
+DX = 1.0         # Spatial step size
+DT = 0.01        # Time step size
+N_SPACE = 101    # Spatial grid points
+N_TIME = 50000   # Total steps (Equivalent to t=500.0 EEM Time)
+
+# 2. INITIAL CONDITIONS: High energy state (Pre-Inflation)
+initial_mean = 1.9883
+initial_noise = 0.01
+rho = initial_mean + initial_noise * (np.random.rand(N_SPACE) - 0.5)
+
+# 3. EEM DYNAMIC FUNCTION (Full PDE)
+def calculate_drho_dt(rho, D, GAMMA, RHO_RES, DX):
+    # 1. DIFFUSION TERM
+    rho_xx = (np.roll(rho, -1) - 2 * rho + np.roll(rho, 1)) / (DX**2)
+    diffusion_term = D * rho_xx
+
+    # 2. LOGISTIC/RELAXATION TERM (The Lambda Solver)
+    relaxation_term = GAMMA * rho * (RHO_RES - rho)
+    return diffusion_term + relaxation_term
+
+# 4. DATA LOGGING: Log every 100 steps for smooth plotting
+log_interval = 100
+log_data = []
+
+# 5. SIMULATION LOOP
+print(f"Running Protocol 9 for plotting (t={N_TIME * DT:.1f}...)\n")
+
+for step in range(N_TIME + 1):
+    drho_dt = calculate_drho_dt(rho, D, GAMMA, RHO_RES, DX)
+    rho += drho_dt * DT
+
+    # Log data for plotting
+    if step % log_interval == 0:
+        mean_rho = np.mean(rho)
+        current_variance = np.var(rho)
+        uv_cap_ratio = np.sqrt(RHO_RES / mean_rho)
+
+        log_data.append({
+            'EEM Time (t)': step * DT,
+            'Mean Rho': mean_rho,
+            'Vacuum Variance': current_variance,
+            'UV Cap Ratio': uv_cap_ratio
+        })
+
+# Convert log data to DataFrame for easy plotting
+results_df = pd.DataFrame(log_data)
+
+
+# ====================================================================
+# 6. CHART GENERATION
+# ====================================================================
+
+plt.figure(figsize=(15, 5))
+time = results_df['EEM Time (t)']
+
+# --- Plot 1: Lambda Solution and Inflation ---
+plt.subplot(1, 3, 1)
+plt.plot(time, results_df['Mean Rho'], label=r'Mean $\rho$ (Vacuum Energy)', color='blue')
+plt.axhline(RHO_RES, color='gray', linestyle='--', label=r'$\rho_{\text{res}}$ Floor ($\Lambda$)')
+plt.ylim(0.95, 2.0)
+plt.title(r'Panel A: $\Lambda$ Solution / Inflation Dynamics', fontsize=10)
+plt.xlabel('EEM Time (t)')
+plt.ylabel(r'Mean Density $\bar{\rho}$')
+plt.legend(fontsize=8)
+plt.grid(True, linestyle=':', alpha=0.6)
+
+# --- Plot 2: Emergent Gravity / Vacuum Stability ---
+plt.subplot(1, 3, 2)
+# Log-scale is essential to show the rapid collapse
+plt.semilogy(time, results_df['Vacuum Variance'], label=r'Vacuum Variance ($\sigma^2$)', color='green')
+plt.axhline(1e-8, color='gray', linestyle=':', label='Numerical Zero')
+plt.title(r'Panel B: Emergent Gravity (Variance Collapse)', fontsize=10)
+plt.xlabel('EEM Time (t)')
+plt.ylabel(r'Variance ($\sigma^2$) [Log Scale]')
+plt.legend(fontsize=8)
+plt.grid(True, linestyle=':', alpha=0.6)
+
+# --- Plot 3: Higgs Hierarchy Protection ---
+plt.subplot(1, 3, 3)
+plt.plot(time, results_df['UV Cap Ratio'], label='UV Cap Ratio', color='red')
+plt.axhline(1.0, color='gray', linestyle='--', label='Target 1.0000')
+plt.ylim(0.7, 1.01)
+plt.title(r'Panel C: Higgs Hierarchy Protection (UV Cutoff)', fontsize=10)
+plt.xlabel('EEM Time (t)')
+plt.ylabel(r'$\sqrt{\rho_{\text{res}} / \bar{\rho}}$ Ratio')
+plt.legend(fontsize=8)
+plt.grid(True, linestyle=':', alpha=0.6)
+
+plt.tight_layout(pad=3.0)
+plt.show()
+
+# Display the tabular log data for reference
+print("\n--- EXTENDED STRUCTURAL VALIDATION LOG (Sampled Data) ---")
+# Sample initial, stabilization, and final values
+sample_indices = [0, 50, 500, len(results_df) - 1]
+print(results_df.iloc[sample_indices].to_string(index=False, float_format='%.8f'))

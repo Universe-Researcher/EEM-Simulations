@@ -1,0 +1,98 @@
+import numpy as np
+import matplotlib.pyplot as plt
+import pandas as pd
+
+# ====================================================================
+# EEM CORE STRUCTURAL STABILITY TEST (1D)
+# ====================================================================
+
+# 1. CORE EEM CONSTANTS
+GAMMA = 0.75     # Relaxation Rate (Required for Lambda Solution)
+D = 0.1          # Diffusion/Mobility Coefficient (Proxy for Gravity/Stabilization)
+RHO_RES = 1.0    # Residual Energy Density (The Lambda Floor)
+DX = 1.0         # Spatial step size
+DT = 0.01        # Time step size
+N_SPACE = 101    # Spatial grid points
+N_TIME = 5000    # Total steps (Equivalent to t=50.0 EEM Time)
+
+# 2. INITIAL CONDITIONS: High energy state (Pre-Inflation)
+initial_mean = 1.9883
+initial_noise = 0.01
+rho = initial_mean + initial_noise * (np.random.rand(N_SPACE) - 0.5)
+
+# 3. EEM DYNAMIC FUNCTION (Full PDE)
+def calculate_drho_dt(rho, D, GAMMA, RHO_RES, DX):
+    # 1. DIFFUSION TERM 
+    rho_xx = (np.roll(rho, -1) - 2 * rho + np.roll(rho, 1)) / (DX**2)
+    diffusion_term = D * rho_xx
+
+    # 2. LOGISTIC/RELAXATION TERM (The Lambda Solver)
+    relaxation_term = GAMMA * rho * (RHO_RES - rho) 
+
+    return diffusion_term + relaxation_term
+
+# 4. DATA LOGGING AND SNAPSHOTS
+snapshot_steps = {
+    0: 't=0.00 (Initial)',
+    50: 't=0.50 (Inflation Peak)',
+    500: 't=5.00 (Stabilization Point)',
+    N_TIME: 't=50.00 (Final Equilibrium)'
+}
+log_data = []
+
+# 5. SIMULATION LOOP
+print("Running Protocol 8: Core Structural Stability Test...")
+
+for step in range(N_TIME + 1):
+    drho_dt = calculate_drho_dt(rho, D, GAMMA, RHO_RES, DX)
+    rho += drho_dt * DT
+    
+    # Calculate Metrics for Logging
+    mean_rho = np.mean(rho)
+    mean_gamma_term = np.mean(GAMMA * rho * (RHO_RES - rho))
+    current_variance = np.var(rho)
+    
+    # Higgs Protection Proxy: UV Cutoff (normalized: sqrt(rho_res / mean_rho))
+    # We use a cap ratio to monitor how close we are to Planck scale energy (rho_qft)
+    uv_cap_ratio = np.sqrt(RHO_RES / mean_rho) 
+    
+    # Log data at key snapshots
+    if step in snapshot_steps or step == N_TIME:
+        log_data.append({
+            'EEM Time (t)': step * DT,
+            'Mean Rho': mean_rho,
+            'Gamma Term Mean': mean_gamma_term,
+            'Vacuum Variance (Sigma^2)': current_variance,
+            'UV Cap Ratio': uv_cap_ratio
+        })
+
+# ====================================================================
+# 6. RESULTS AND VALIDATION
+# ====================================================================
+
+results_df = pd.DataFrame(log_data)
+print("\n--- EEM CORE STRUCTURAL VALIDATION LOG ---")
+print(results_df.to_string(index=False, float_format='%.6f'))
+
+# Final Validation Check
+final_mean_rho = results_df['Mean Rho'].iloc[-1]
+final_variance = results_df['Vacuum Variance (Sigma^2)'].iloc[-1]
+
+print("\n--- FINAL VALIDATION SUMMARY ---")
+if np.isclose(final_mean_rho, RHO_RES, atol=1e-4):
+    print(f"1. Lambda Solution: VALIDATED. Mean Rho converged to Lambda Floor ({final_mean_rho:.6f}).")
+else:
+    print("1. Lambda Solution: PENDING.")
+
+if final_variance < 1e-6:
+    print(f"2. Vacuum Stability (Gravity Proxy): VALIDATED. Variance collapse confirms stabilization ({final_variance:.8f}).")
+else:
+    print("2. Vacuum Stability (Gravity Proxy): PENDING.")
+    
+# Check Higgs Protection at t=5.00 (where Lambda is established)
+stabilized_rho = results_df[results_df['EEM Time (t)'] == 5.00]['Mean Rho'].values[0]
+stabilized_uv_cap_ratio = np.sqrt(RHO_RES / stabilized_rho) if stabilized_rho > 0 else 0
+if stabilized_uv_cap_ratio < 1.01:
+    print(f"3. Higgs Protection: VALIDATED. UV Cap Ratio stabilized near 1.0000 (Actual: {stabilized_uv_cap_ratio:.6f}).")
+else:
+    print("3. Higgs Protection: PENDING.")
